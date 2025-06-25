@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シンプルローグライク</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #000;
+            color: #0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        #game-container {
+            text-align: center;
+        }
+        #game-display {
+            background-color: #111;
+            padding: 20px;
+            border: 2px solid #0f0;
+            line-height: 1.1;
+            font-size: 14px;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
+        }
+        .player {
+            color: #0ff;
+            font-weight: bold;
+        }
+        .enemy {
+            color: #f00;
+            font-weight: bold;
+        }
+        .stairs {
+            color: #ff0;
+        }
+        .potion {
+            color: #f0f;
+            font-weight: bold;
+        }
+        #info {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        #controls {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        .message {
+            margin-top: 10px;
+            color: #ff0;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="game-display"></div>
+        <div id="info"></div>
+        <div class="message" id="message"></div>
+        <div id="controls">
+            移動: 矢印キー または WASD | 階段を降りる: > (階段の上で) | 足踏み: スペース | ゲームオーバー時: Rで再開
+        </div>
+    </div>
+
+    <script>
+        // ゲーム設定
+        const MAP_WIDTH = 60;
+        const MAP_HEIGHT = 30;
+        const ROOM_MIN_SIZE = 4;
+        const ROOM_MAX_SIZE = 8;
+        const MAX_ROOMS = 10;
+
+        // ゲーム状態
+        let map = [];
+        let player = { x: 0, y: 0, hp: 20, maxHp: 20 };
+        let enemies = [];
+        let stairs = { x: 0, y: 0 };
+        let potions = [];
+        let floor = 1;
+        let message = '';
+        let gameOver = false;
+
+        // タイルタイプ
+        const TILE = {
+            WALL: '#',
+            FLOOR: '.',
+            PLAYER: '@',
+            ENEMY: 'g',
+            STAIRS: '>',
+            POTION: '!'
+        };
+
+        // 初期化
+        function init() {
+            generateMap();
+            document.addEventListener('keydown', handleInput);
+            render();
+        }
+        
+        // ゲームリセット
+        function resetGame() {
+            player = { x: 0, y: 0, hp: 20, maxHp: 20 };
+            enemies = [];
+            potions = [];
+            floor = 1;
+            message = '';
+            gameOver = false;
+            generateMap();
+            render();
+        }
+
+        // マップ生成
+        function generateMap() {
+            // マップを壁で初期化
+            map = Array(MAP_HEIGHT).fill(null).map(() => Array(MAP_WIDTH).fill(TILE.WALL));
+            enemies = [];
+            potions = [];
+            
+            const rooms = [];
+            
+            // ランダムに部屋を生成
+            for (let i = 0; i < MAX_ROOMS; i++) {
+                const roomWidth = Math.floor(Math.random() * (ROOM_MAX_SIZE - ROOM_MIN_SIZE + 1)) + ROOM_MIN_SIZE;
+                const roomHeight = Math.floor(Math.random() * (ROOM_MAX_SIZE - ROOM_MIN_SIZE + 1)) + ROOM_MIN_SIZE;
+                const x = Math.floor(Math.random() * (MAP_WIDTH - roomWidth - 2)) + 1;
+                const y = Math.floor(Math.random() * (MAP_HEIGHT - roomHeight - 2)) + 1;
+                
+                const newRoom = { x, y, width: roomWidth, height: roomHeight };
+                
+                // 部屋が重ならないかチェック
+                let overlaps = false;
+                for (const room of rooms) {
+                    if (x < room.x + room.width && x + roomWidth > room.x &&
+                        y < room.y + room.height && y + roomHeight > room.y) {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                
+                if (!overlaps) {
+                    // 部屋を掘る
+                    for (let ry = y; ry < y + roomHeight; ry++) {
+                        for (let rx = x; rx < x + roomWidth; rx++) {
+                            map[ry][rx] = TILE.FLOOR;
+                        }
+                    }
+                    
+                    // 前の部屋と通路でつなぐ
+                    if (rooms.length > 0) {
+                        const prevRoom = rooms[rooms.length - 1];
+                        const prevCenterX = Math.floor(prevRoom.x + prevRoom.width / 2);
+                        const prevCenterY = Math.floor(prevRoom.y + prevRoom.height / 2);
+                        const centerX = Math.floor(x + roomWidth / 2);
+                        const centerY = Math.floor(y + roomHeight / 2);
+                        
+                        // 水平通路
+                        const minX = Math.min(prevCenterX, centerX);
+                        const maxX = Math.max(prevCenterX, centerX);
+                        for (let cx = minX; cx <= maxX; cx++) {
+                            map[prevCenterY][cx] = TILE.FLOOR;
+                        }
+                        
+                        // 垂直通路
+                        const minY = Math.min(prevCenterY, centerY);
+                        const maxY = Math.max(prevCenterY, centerY);
+                        for (let cy = minY; cy <= maxY; cy++) {
+                            map[cy][centerX] = TILE.FLOOR;
+                        }
+                    }
+                    
+                    rooms.push(newRoom);
+                }
+            }
+            
+            // プレイヤーを最初の部屋に配置
+            if (rooms.length > 0) {
+                const firstRoom = rooms[0];
+                player.x = Math.floor(firstRoom.x + firstRoom.width / 2);
+                player.y = Math.floor(firstRoom.y + firstRoom.height / 2);
+            }
+            
+            // 階段を最後の部屋に配置
+            if (rooms.length > 1) {
+                const lastRoom = rooms[rooms.length - 1];
+                stairs.x = Math.floor(lastRoom.x + lastRoom.width / 2);
+                stairs.y = Math.floor(lastRoom.y + lastRoom.height / 2);
+            }
+            
+            // 敵を配置（プレイヤーと階段以外の部屋に）
+            for (let i = 1; i < rooms.length - 1; i++) {
+                const room = rooms[i];
+                const enemyX = Math.floor(room.x + Math.random() * room.width);
+                const enemyY = Math.floor(room.y + Math.random() * room.height);
+                enemies.push({ x: enemyX, y: enemyY, hp: 3 });
+            }
+            
+            // 5階ごとに追加の敵を配置
+            const extraEnemies = Math.floor((floor - 1) / 5);
+            for (let i = 0; i < extraEnemies; i++) {
+                if (rooms.length > 2) {
+                    // ランダムな部屋を選択（最初と最後以外）
+                    const roomIndex = Math.floor(Math.random() * (rooms.length - 2)) + 1;
+                    const room = rooms[roomIndex];
+                    const enemyX = Math.floor(room.x + Math.random() * room.width);
+                    const enemyY = Math.floor(room.y + Math.random() * room.height);
+                    
+                    // 既存の敵やプレイヤーと重ならないようにチェック
+                    if (!enemies.some(e => e.x === enemyX && e.y === enemyY) &&
+                        !(enemyX === player.x && enemyY === player.y)) {
+                        enemies.push({ x: enemyX, y: enemyY, hp: 3 });
+                    }
+                }
+            }
+            
+            // ポーションを配置
+            const potionCount = floor >= 5 ? 2 : 1;
+            for (let i = 0; i < potionCount; i++) {
+                let placed = false;
+                let attempts = 0;
+                while (!placed && attempts < 50) {
+                    const roomIndex = Math.floor(Math.random() * rooms.length);
+                    const room = rooms[roomIndex];
+                    const potionX = Math.floor(room.x + Math.random() * room.width);
+                    const potionY = Math.floor(room.y + Math.random() * room.height);
+                    
+                    // 他のオブジェクトと重ならないようにチェック
+                    if (!enemies.some(e => e.x === potionX && e.y === potionY) &&
+                        !potions.some(p => p.x === potionX && p.y === potionY) &&
+                        !(potionX === player.x && potionY === player.y) &&
+                        !(potionX === stairs.x && potionY === stairs.y)) {
+                        potions.push({ x: potionX, y: potionY });
+                        placed = true;
+                    }
+                    attempts++;
+                }
+            }
+        }
+
+        // 入力処理
+        function handleInput(e) {
+            // ゲームオーバー時の処理
+            if (gameOver) {
+                if (e.key === 'r' || e.key === 'R') {
+                    resetGame();
+                }
+                return;
+            }
+            
+            let dx = 0, dy = 0;
+            
+            switch(e.key) {
+                case 'ArrowUp':
+                case 'w':
+                case 'W':
+                    dy = -1;
+                    break;
+                case 'ArrowDown':
+                case 's':
+                case 'S':
+                    dy = 1;
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                case 'A':
+                    dx = -1;
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                case 'D':
+                    dx = 1;
+                    break;
+                case '>':
+                    if (player.x === stairs.x && player.y === stairs.y) {
+                        floor++;
+                        player.hp = Math.min(player.hp + 5, player.maxHp); // 回復
+                        generateMap();
+                        message = `階層 ${floor} へ降りた！ HP回復！`;
+                    }
+                    break;
+                case ' ':
+                    // 足踏み（その場で待機）
+                    if (!gameOver) {
+                        moveEnemies();
+                        message = '足踏みした';
+                    }
+                    break;
+            }
+            
+            if (dx !== 0 || dy !== 0) {
+                movePlayer(dx, dy);
+            }
+            
+            render();
+        }
+
+        // プレイヤー移動
+        function movePlayer(dx, dy) {
+            const newX = player.x + dx;
+            const newY = player.y + dy;
+            
+            // 範囲チェック
+            if (newX < 0 || newX >= MAP_WIDTH || newY < 0 || newY >= MAP_HEIGHT) {
+                // マップ外に移動しようとした場合も足踏み扱い
+                if (!gameOver) {
+                    moveEnemies();
+                    message = '壁にぶつかった';
+                }
+                render();
+                return;
+            }
+            
+            // 壁チェック
+            if (map[newY][newX] === TILE.WALL) {
+                // 壁に向かって移動しようとした場合も足踏み扱い
+                if (!gameOver) {
+                    moveEnemies();
+                    message = '壁にぶつかった';
+                }
+                render();
+                return;
+            }
+            
+            // 敵との衝突チェック
+            const enemyIndex = enemies.findIndex(e => e.x === newX && e.y === newY);
+            if (enemyIndex !== -1) {
+                // 戦闘
+                enemies[enemyIndex].hp -= 2;
+                if (enemies[enemyIndex].hp <= 0) {
+                    enemies.splice(enemyIndex, 1);
+                    message = 'ゴブリンを倒した！';
+                } else {
+                    player.hp -= 1;
+                    message = `ゴブリンに攻撃された！ HP: ${player.hp}`;
+                }
+                
+                if (player.hp <= 0) {
+                    message = 'ゲームオーバー！ Rキーで再開';
+                    gameOver = true;
+                }
+                return;
+            }
+            
+            // 移動
+            player.x = newX;
+            player.y = newY;
+            message = '';
+            
+            // ポーションチェック
+            const potionIndex = potions.findIndex(p => p.x === player.x && p.y === player.y);
+            if (potionIndex !== -1) {
+                player.hp = player.maxHp;
+                potions.splice(potionIndex, 1);
+                message = 'ポーションを飲んだ！ HP全回復！';
+            }
+            
+            // 敵の移動（ゲームオーバーでない場合のみ）
+            if (!gameOver) {
+                moveEnemies();
+            }
+        }
+
+        // 敵の移動
+        function moveEnemies() {
+            for (const enemy of enemies) {
+                // プレイヤーに向かって移動
+                const dx = Math.sign(player.x - enemy.x);
+                const dy = Math.sign(player.y - enemy.y);
+                
+                // ランダムに x か y 方向に移動
+                let newX = enemy.x;
+                let newY = enemy.y;
+                
+                if (Math.random() > 0.5 && dx !== 0) {
+                    newX += dx;
+                } else if (dy !== 0) {
+                    newY += dy;
+                }
+                
+                // 移動可能かチェック
+                if (map[newY][newX] !== TILE.WALL && 
+                    !(newX === player.x && newY === player.y) &&
+                    !enemies.some(e => e !== enemy && e.x === newX && e.y === newY)) {
+                    enemy.x = newX;
+                    enemy.y = newY;
+                }
+                
+                // プレイヤーに隣接している場合は攻撃
+                if (Math.abs(enemy.x - player.x) <= 1 && Math.abs(enemy.y - player.y) <= 1) {
+                    player.hp -= 1;
+                    message = `ゴブリンに攻撃された！ HP: ${player.hp}`;
+                    
+                    if (player.hp <= 0) {
+                        message = 'ゲームオーバー！ Rキーで再開';
+                        gameOver = true;
+                    }
+                }
+            }
+        }
+
+        // 描画
+        function render() {
+            let display = '';
+            
+            for (let y = 0; y < MAP_HEIGHT; y++) {
+                for (let x = 0; x < MAP_WIDTH; x++) {
+                    if (x === player.x && y === player.y) {
+                        display += `<span class="player">${TILE.PLAYER}</span>`;
+                    } else if (enemies.some(e => e.x === x && e.y === y)) {
+                        display += `<span class="enemy">${TILE.ENEMY}</span>`;
+                    } else if (x === stairs.x && y === stairs.y) {
+                        display += `<span class="stairs">${TILE.STAIRS}</span>`;
+                    } else if (potions.some(p => p.x === x && p.y === y)) {
+                        display += `<span class="potion">${TILE.POTION}</span>`;
+                    } else {
+                        display += map[y][x];
+                    }
+                }
+                display += '\n';
+            }
+            
+            document.getElementById('game-display').innerHTML = display;
+            const extraEnemyInfo = Math.floor((floor - 1) / 5) > 0 ? ` | 追加敵: +${Math.floor((floor - 1) / 5)}` : '';
+            document.getElementById('info').textContent = `階層: ${floor} | HP: ${player.hp}/${player.maxHp}${extraEnemyInfo}`;
+            document.getElementById('message').textContent = message;
+        }
+
+        // ゲーム開始
+        init();
+    </script>
+</body>
+</html>
